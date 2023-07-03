@@ -1,20 +1,25 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <cstdlib>
+#include <string>
 #include <windows.h>
 #include <setupapi.h>
 #include <shlwapi.h>
+#include <newdev.h>
 #include <iostream>
+#include <conio.h>
 
 #pragma comment (lib, "Setupapi.lib")
 #pragma comment (lib, "shlwapi.lib")
+#pragma comment (lib, "newdev.lib")
 
 // The following function is from: 
-// https://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror//////
+// https://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror
 static std::string GetLastErrorAsString()
 {
 	//Get the error message ID, if any.
-	DWORD errorMessageID = ::GetLastError();
+	DWORD errorMessageID = GetLastError();
+
 	if (errorMessageID == 0) {
 		return std::string(); //No error message has been recorded
 	}
@@ -31,46 +36,49 @@ static std::string GetLastErrorAsString()
 			NULL,
 			errorMessageID,
 			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-			(LPSTR)&messageBuffer, 0, NULL);
+			(LPSTR) &messageBuffer, 
+			0,
+			NULL);
 
 	//Copy the error message into a std::string.
 	std::string message(messageBuffer, size);
 
 	//Free the Win32's string's buffer.
 	LocalFree(messageBuffer);
-
 	return message;
 }
 
-int main(int argc, char* argv[]) {
-	if (argc == 1) {
-		std::cout << "ERROR: No GUID specified.\n";
-		return EXIT_FAILURE;
-	}
+static wchar_t* ConvertCharStringToWcharString(char* source) {
+	size_t guidLength = strlen(source);
+	wchar_t* target = new wchar_t[guidLength + 1];
+	target[guidLength] = L'\0';
+	mbstowcs(target, source, guidLength);
+	return target;
+}
 
-	if (argc > 2) {
-		PathStripPathA(argv[1]);
-		std::cout << "Usage: " << argv[1] << " GUID\n";
-		return EXIT_FAILURE;
-	}
+static void PromptToExit(std::ostream& out) {
+	out << "Press any key to exit.\n";
+	_getch();
+}
 
-	size_t guidLength = strlen(argv[1]);
-	wchar_t* guidAsWideChar = new wchar_t[guidLength + 1];
-	guidAsWideChar[guidLength] = L'\0';
-	mbstowcs(guidAsWideChar, argv[1], guidLength);
+static bool LoadDeviceData(
+	char* guidString, 
+	HDEVINFO* pDevInfo, 
+	PSP_DEVINFO_DATA pData) {
 
 	GUID guid;
 	HRESULT hResult =
 		CLSIDFromString(
-			guidAsWideChar,
-			(LPCLSID)&guid);
+			ConvertCharStringToWcharString(guidString),
+			(LPCLSID) &guid);
 
 	if (hResult == CO_E_CLASSSTRING) {
 		std::cerr << "ERROR: Bad GUID string: "
-				  << GetLastErrorAsString() 
-				  << "\n";
+			<< GetLastErrorAsString()
+			<< "\n";
 
-		return EXIT_FAILURE;
+		PromptToExit(std::cerr);
+		return false;
 	}
 
 	HDEVINFO hDeviceInfo =
@@ -85,42 +93,115 @@ int main(int argc, char* argv[]) {
 
 	if (hDeviceInfo == INVALID_HANDLE_VALUE) {
 		std::cerr << "ERROR: Could not obtain HDEVINFO: "
-			      << GetLastErrorAsString() 
-				  << "\n";
+			<< GetLastErrorAsString()
+			<< "\n";
 
-		return EXIT_FAILURE;
+		PromptToExit(std::cerr);
+		return false;
 	}
 
-	SP_DEVINFO_DATA deviceInfoData;
-	deviceInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
-	deviceInfoData.ClassGuid = guid;
+	pDevInfo = &hDeviceInfo;
+	pData->cbSize = sizeof(SP_DEVINFO_DATA);
+	pData->ClassGuid = guid;
 
 	BOOL deviceEnumerated =
 		SetupDiEnumDeviceInfo(
 			hDeviceInfo,
 			0,
-			&deviceInfoData);
+			pData);
 
 	if (!deviceEnumerated) {
-		std::cerr << "ERROR: Could not enumerate the SP_DEVINFO_DATA: " 
-				  << GetLastErrorAsString()
-				  << "\n";
+		std::cerr << "ERROR: Could not enumerate the SP_DEVINFO_DATA: "
+			<< GetLastErrorAsString()
+			<< "\n";
 
+		PromptToExit(std::cerr);
+		return false;
+	}
+
+	return true;
+}
+
+int main(int argc, char* argv[]) {
+	if (argc == 1) {
+		std::cout << "ERROR: No GUID specified.\n";
+		PromptToExit(std::cerr);
 		return EXIT_FAILURE;
 	}
 
-	BOOL removeStatus =
-		SetupDiCallClassInstaller(
-			DIF_REMOVE,
-			hDeviceInfo,
-			&deviceInfoData);
-
-	if (!removeStatus) {
-		std::cerr << "ERROR: Could not remove the device: " 
-				  << GetLastErrorAsString()
-				  << "\n";
-
+	if (argc > 3) {
+		PathStripPathA(argv[0]);
+		std::cout << "Usage: " << argv[0] << "[--install] GUID\n";
+		PromptToExit(std::cerr);
 		return EXIT_FAILURE;
+	}
+
+	bool install = false;
+	char* guidParameter = NULL;
+
+	if (argc == 2) {
+		guidParameter = argv[1];
+	} else if (argc == 3) {
+		std::string flagParameter = argv[1];
+		const std::string expectedFlag = "--install";
+
+		if (flagParameter != expectedFlag) {
+			std::cerr << "ERROR: Wrong flag: " << flagParameter << "\n";
+			PromptToExit(std::cerr);
+			return EXIT_FAILURE;
+		}
+
+		guidParameter = argv[2];
+		install = true;
+	}
+
+	HDEVINFO hDevInfo;
+	SP_DEVINFO_DATA deviceData;
+
+	bool ok = 
+		LoadDeviceData(
+			guidParameter, 
+			&hDevInfo, 
+			&deviceData);
+
+	if (!ok) {
+		PromptToExit(std::cerr);
+		return EXIT_FAILURE;
+	}
+
+	if (install) {
+		BOOL installStatus =
+			DiInstallDevice(
+				NULL,
+				hDevInfo, 
+				&deviceData, 
+				NULL,
+				0,
+				NULL);
+
+		if (!installStatus) {
+			std::cerr << "ERROR: Could not install the device: "
+					  << GetLastErrorAsString()
+				      << "\n";
+
+			PromptToExit(std::cerr);
+			return EXIT_FAILURE;
+		}
+	} else {
+		BOOL removeStatus =
+			SetupDiCallClassInstaller(
+				DIF_REMOVE,
+				hDevInfo,
+				&deviceData);
+
+		if (!removeStatus) {
+			std::cerr << "ERROR: Could not remove the device: "
+				<< GetLastErrorAsString()
+				<< "\n";
+
+			PromptToExit(std::cerr);
+			return EXIT_FAILURE;
+		}
 	}
 
 	return EXIT_SUCCESS;
