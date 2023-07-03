@@ -8,10 +8,14 @@
 #include <newdev.h>
 #include <iostream>
 #include <conio.h>
+#include <algorithm> 
+#include <cctype>
 
 #pragma comment (lib, "Setupapi.lib")
 #pragma comment (lib, "shlwapi.lib")
 #pragma comment (lib, "newdev.lib")
+
+static const std::string installFlag = "--install";
 
 // The following function is from: 
 // https://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror
@@ -48,11 +52,35 @@ static std::string GetLastErrorAsString()
 	return message;
 }
 
+// The following three trim functions are from:
+// https://stackoverflow.com/questions/216823/how-to-trim-an-stdstring
+// trim from start (in place)
+static void ltrim(std::string& s) {
+	s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+		return !std::isspace(ch);
+		}));
+}
+
+// trim from end (in place)
+static void rtrim(std::string& s) {
+	s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+		return !std::isspace(ch);
+		}).base(), s.end());
+}
+
+// trim from both ends (in place)
+static void trim(std::string& s) {
+	rtrim(s);
+	ltrim(s);
+}
+
 static wchar_t* ConvertCharStringToWcharString(char* source) {
-	size_t guidLength = strlen(source);
+	std::string s = source;
+	trim(s);
+	size_t guidLength = s.length();
 	wchar_t* target = new wchar_t[guidLength + 1];
 	target[guidLength] = L'\0';
-	mbstowcs(target, source, guidLength);
+	mbstowcs(target, s.c_str(), guidLength);
 	return target;
 }
 
@@ -64,8 +92,9 @@ static void PromptToExit(std::ostream& out) {
 static bool LoadDeviceData(
 	char* guidString, 
 	HDEVINFO* pDevInfo, 
-	PSP_DEVINFO_DATA pData) {
-
+	PSP_DEVINFO_DATA pData,
+	bool install) {
+	
 	GUID guid;
 	HRESULT hResult =
 		CLSIDFromString(
@@ -86,7 +115,7 @@ static bool LoadDeviceData(
 			&guid,
 			NULL,
 			NULL,
-			DIGCF_PRESENT,
+			install ? DIGCF_PRESENT : DIGCF_PRESENT,
 			NULL,
 			NULL,
 			NULL);
@@ -100,7 +129,7 @@ static bool LoadDeviceData(
 		return false;
 	}
 
-	pDevInfo = &hDeviceInfo;
+	*pDevInfo = hDeviceInfo;
 	pData->cbSize = sizeof(SP_DEVINFO_DATA);
 	pData->ClassGuid = guid;
 
@@ -131,7 +160,7 @@ int main(int argc, char* argv[]) {
 
 	if (argc > 3) {
 		PathStripPathA(argv[0]);
-		std::cout << "Usage: " << argv[0] << "[--install] GUID\n";
+		std::cout << "Usage: " << argv[0] << " [--install] GUID\n";
 		PromptToExit(std::cerr);
 		return EXIT_FAILURE;
 	}
@@ -143,9 +172,8 @@ int main(int argc, char* argv[]) {
 		guidParameter = argv[1];
 	} else if (argc == 3) {
 		std::string flagParameter = argv[1];
-		const std::string expectedFlag = "--install";
 
-		if (flagParameter != expectedFlag) {
+		if (flagParameter != installFlag) {
 			std::cerr << "ERROR: Wrong flag: " << flagParameter << "\n";
 			PromptToExit(std::cerr);
 			return EXIT_FAILURE;
@@ -162,10 +190,10 @@ int main(int argc, char* argv[]) {
 		LoadDeviceData(
 			guidParameter, 
 			&hDevInfo, 
-			&deviceData);
+			&deviceData,
+			install);
 
 	if (!ok) {
-		PromptToExit(std::cerr);
 		return EXIT_FAILURE;
 	}
 
@@ -184,7 +212,6 @@ int main(int argc, char* argv[]) {
 					  << GetLastErrorAsString()
 				      << "\n";
 
-			PromptToExit(std::cerr);
 			return EXIT_FAILURE;
 		}
 	} else {
@@ -198,11 +225,10 @@ int main(int argc, char* argv[]) {
 			std::cerr << "ERROR: Could not remove the device: "
 				<< GetLastErrorAsString()
 				<< "\n";
-
-			PromptToExit(std::cerr);
+			
 			return EXIT_FAILURE;
 		}
 	}
-
+	
 	return EXIT_SUCCESS;
 }
