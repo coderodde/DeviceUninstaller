@@ -115,7 +115,7 @@ static bool LoadDeviceData(
 			&guid,
 			NULL,
 			NULL,
-			install ? DIGCF_PRESENT : DIGCF_PRESENT,
+			install ? DIGCF_ALLCLASSES : DIGCF_PRESENT,
 			NULL,
 			NULL,
 			NULL);
@@ -198,6 +198,8 @@ int main(int argc, char* argv[]) {
 	}
 
 	if (install) {
+		BOOL rebootNeeded;
+
 		BOOL installStatus =
 			DiInstallDevice(
 				NULL,
@@ -205,7 +207,7 @@ int main(int argc, char* argv[]) {
 				&deviceData, 
 				NULL,
 				0,
-				NULL);
+				&rebootNeeded);
 
 		if (!installStatus) {
 			std::cerr << "ERROR: Could not install the device: "
@@ -214,12 +216,26 @@ int main(int argc, char* argv[]) {
 
 			return EXIT_FAILURE;
 		}
+		else {
+			if (rebootNeeded) {
+				std::cout << "You need to reboot your computer " 
+					      << "for changes to take effect.\n";
+
+				PromptToExit(std::cout);
+			}
+
+			return EXIT_SUCCESS;
+		}
 	} else {
+		BOOL rebootNeeded;
+
 		BOOL removeStatus =
-			SetupDiCallClassInstaller(
-				DIF_REMOVE,
-				hDevInfo,
-				&deviceData);
+			DiUninstallDevice(
+				NULL, 
+				hDevInfo, 
+				&deviceData, 
+				0, 
+				&rebootNeeded);
 
 		if (!removeStatus) {
 			std::cerr << "ERROR: Could not remove the device: "
@@ -228,7 +244,18 @@ int main(int argc, char* argv[]) {
 			
 			return EXIT_FAILURE;
 		}
+		else {
+			if (rebootNeeded) {
+				std::cout << "You need to reboot your computer "
+					      << "for changes to take effect.\n";
+
+				PromptToExit(std::cout);
+			}
+
+			return EXIT_SUCCESS;
+		}
 	}
 	
+
 	return EXIT_SUCCESS;
 }
