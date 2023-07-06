@@ -93,6 +93,7 @@ static bool LoadDeviceData(
 	char* guidString, 
 	HDEVINFO* pDevInfo, 
 	PSP_DEVINFO_DATA pData,
+	PSP_DRVINFO_DATA pDriverData,
 	bool install) {
 	
 	GUID guid;
@@ -148,6 +149,26 @@ static bool LoadDeviceData(
 		return false;
 	}
 
+	if (install) {
+		pDriverData->cbSize = sizeof(SP_DRVINFO_DATA);
+		pDriverData->DriverType = SPDIT_CLASSDRIVER;
+
+		BOOL ok =
+			SetupDiGetSelectedDriver(
+				hDeviceInfo,
+				pData,
+				pDriverData);
+			
+		if (!ok) {
+			std::cerr << "ERROR: Could not obtain device driver info: "
+				      << GetLastErrorAsString()
+				      << "\n";
+
+			PromptToExit(std::cerr);
+			return false;
+		}
+	}
+
 	return true;
 }
 
@@ -185,12 +206,14 @@ int main(int argc, char* argv[]) {
 
 	HDEVINFO hDevInfo;
 	SP_DEVINFO_DATA deviceData;
+	SP_DRVINFO_DATA driverData;
 
 	bool ok = 
 		LoadDeviceData(
 			guidParameter, 
 			&hDevInfo, 
 			&deviceData,
+			&driverData,
 			install);
 
 	if (!ok) {
@@ -205,7 +228,7 @@ int main(int argc, char* argv[]) {
 				NULL,
 				hDevInfo, 
 				&deviceData, 
-				NULL,
+				&driverData,
 				0,
 				&rebootNeeded);
 
